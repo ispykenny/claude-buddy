@@ -3,13 +3,13 @@
   <channel>
     <title>Claude Buddy</title>
     <item>
-      <title>Version 1.2.1</title>
-      <pubDate>Tue, 29 Sep 2026 20:54:16 -0700</pubDate>
-      <sparkle:version>1.2.1</sparkle:version>
-      <sparkle:shortVersionString>1.2.1</sparkle:shortVersionString>
+      <title>Version 1.3.0</title>
+      <pubDate>Tue, 29 Sep 2026 21:07:59 -0700</pubDate>
+      <sparkle:version>1.3.0</sparkle:version>
+      <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>When one agent finishes while others are still working, the walkers keep going and the menu bar briefly says which one finished, instead of switching to the full Done! celebration.</p>]]></description>
-      <enclosure url="https://github.com/ispykenny/claude-buddy/releases/download/v1.2.1/ClaudeBuddy-1.2.1.zip" type="application/octet-stream" sparkle:edSignature="VbDvbddMOL4m7evLHg7En7A1kK0CWnwwKPI7EGYtWuNIFfmIHPKNtpijs+IfOZRcZKiM63f7zjQK4qYkXhfUCA==" length="1223479" />
+      <description><![CDATA[<p>Claude Buddy now connects itself to Claude Code on first launch (and keeps its hooks pointed at the right place if you move the app), runs on Intel Macs too, and has a Connected to Claude Code toggle in the menu.</p>]]></description>
+      <enclosure url="https://github.com/ispykenny/claude-buddy/releases/download/v1.3.0/ClaudeBuddy-1.3.0.zip" type="application/octet-stream" sparkle:edSignature="GJOD+l8pXRdlKaaSnhJ7RjXdcpeip2Ire1B58OTzEkxsdqLKlO20L54UeiZb0WbTXonqglvNr8AeUTXSA2aMCg==" length="1365103" />
     </item>
   </channel>
 </rss>
