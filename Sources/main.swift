@@ -22,6 +22,8 @@ struct Session: Codable {
     var transcript: String?
     var hostApp: String?
     var iterm: String?
+    var name: String?
+    var entrypoint: String?
 
     var project: String { cwd.map { ($0 as NSString).lastPathComponent } ?? "claude" }
 }
@@ -61,9 +63,33 @@ func tail(_ path: String, bytes: Int) -> String? {
     return String(decoding: data, as: UTF8.self)
 }
 
+// MARK: - Claude Code's session registry (~/.claude/sessions/<pid>.json, one per running claude)
+
+struct RegistryEntry: Decodable {
+    let pid: Int32
+    let sessionId: String
+    let cwd: String?
+    let name: String?
+    let nameSource: String?
+    let entrypoint: String?
+    let status: String?
+    let statusUpdatedAt: Double?
+    let updatedAt: Double?
+}
+
+func loadRegistry() -> [RegistryEntry] {
+    let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
+    let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+    return files.filter { $0.pathExtension == "json" }.compactMap {
+        (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(RegistryEntry.self, from: $0) }
+    }
+}
+
+func isAlive(_ pid: Int32) -> Bool { kill(pid, 0) == 0 || errno != ESRCH }
+
 // MARK: - Hook mode (`ClaudeBuddy hook`, fed JSON on stdin by Claude Code)
 
-func parentInfo(_ pid: pid_t) -> (ppid: pid_t, name: String)? {
+func procInfo(_ pid: pid_t) -> (ppid: pid_t, name: String, tty: String?)? {
     var info = kinfo_proc()
     var size = MemoryLayout<kinfo_proc>.stride
     var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
@@ -71,14 +97,17 @@ func parentInfo(_ pid: pid_t) -> (ppid: pid_t, name: String)? {
     let name = withUnsafePointer(to: info.kp_proc.p_comm) {
         $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMLEN) + 1) { String(cString: $0) }
     }
-    return (info.kp_eproc.e_ppid, name)
+    var tty: String?
+    let dev = info.kp_eproc.e_tdev
+    if dev != -1, let n = devname(dev, mode_t(S_IFCHR)), String(cString: n) != "??" { tty = "/dev/" + String(cString: n) }
+    return (info.kp_eproc.e_ppid, name, tty)
 }
 
 /// The Claude Code process that spawned this hook (skipping any wrapper shell).
 func claudePID() -> Int32 {
     var pid = getppid()
     for _ in 0..<3 {
-        guard let info = parentInfo(pid), ["sh", "bash", "zsh", "dash"].contains(info.name) else { break }
+        guard let info = procInfo(pid), ["sh", "bash", "zsh", "dash"].contains(info.name) else { break }
         pid = info.ppid
     }
     return pid
@@ -301,27 +330,86 @@ let verbs = [
 
 enum Mode { case sleeping, idle, working, waiting, celebrating }
 
-/// Reads the live spinner verb ("Smooshing…") off an iTerm2 session's screen.
-enum ScreenReader {
-    static let queue = DispatchQueue(label: "screen-reader")
+/// Talks to terminal apps over AppleScript: reads the live spinner verb and brings a session's tab forward.
+enum Terminals {
+    static let queue = DispatchQueue(label: "terminals")
+    static let iTerm = "com.googlecode.iterm2"
+    static let terminal = "com.apple.Terminal"
     static let spinner = try! NSRegularExpression(pattern: #"(?m)^\s*[^\s>❯│]{1,2}\s+([A-Z][^\s…]{1,40})…(?:\s*\(|\s*$)"#)
 
-    static func verb(itermSession id: String) -> String? {
-        let src = """
-        tell application "iTerm2"
-          repeat with w in windows
-            repeat with t in tabs of w
-              repeat with s in sessions of t
-                if unique ID of s is "\(id)" then return contents of s
+    static func isRunning(_ bundleID: String) -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    }
+
+    static func run(_ source: String) -> String? {
+        NSAppleScript(source: source)?.executeAndReturnError(nil).stringValue
+    }
+
+    /// The spinner word ("Smooshing") on the iTerm2 session attached to `tty`.
+    static func verb(tty: String) -> String? {
+        guard isRunning(iTerm), let text = run("""
+            tell application "iTerm2"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  repeat with s in sessions of t
+                    if tty of s is "\(tty)" then return contents of s
+                  end repeat
+                end repeat
               end repeat
-            end repeat
-          end repeat
-        end tell
-        """
-        guard let text = NSAppleScript(source: src)?.executeAndReturnError(nil).stringValue else { return nil }
+            end tell
+            """) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let m = spinner.matches(in: text, range: range).last, let r = Range(m.range(at: 1), in: text) else { return nil }
         return String(text[r])
+    }
+
+    /// Selects the iTerm2 or Terminal tab attached to `tty` and brings it to the front.
+    static func focus(tty: String) -> Bool {
+        if isRunning(iTerm), run("""
+            tell application "iTerm2"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  repeat with s in sessions of t
+                    if tty of s is "\(tty)" then
+                      tell w to select
+                      tell t to select
+                      tell s to select
+                      activate
+                      return "ok"
+                    end if
+                  end repeat
+                end repeat
+              end repeat
+            end tell
+            return "no"
+            """) == "ok" { return true }
+        if isRunning(terminal), run("""
+            tell application "Terminal"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  if tty of t is "\(tty)" then
+                    set selected of t to true
+                    set index of w to 1
+                    activate
+                    return "ok"
+                  end if
+                end repeat
+              end repeat
+            end tell
+            return "no"
+            """) == "ok" { return true }
+        return false
+    }
+
+    /// The GUI app a process lives under (VS Code, Ghostty, the Claude desktop app, …).
+    static func hostApp(of pid: Int32) -> NSRunningApplication? {
+        var p = pid
+        for _ in 0..<12 {
+            if let app = NSRunningApplication(processIdentifier: p), app.activationPolicy == .regular { return app }
+            guard let info = procInfo(p), info.ppid > 1 else { return nil }
+            p = info.ppid
+        }
+        return nil
     }
 }
 
@@ -372,7 +460,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             loaded.append(s)
         }
-        sessions = loaded.sorted { $0.updatedAt > $1.updatedAt }
+
+        // Hook data per claude process (after /clear a process gets a new session id; keep the latest).
+        var hooked: [Int32: Session] = [:]
+        var unkeyed: [Session] = []
+        for s in loaded {
+            guard let pid = s.pid else { unkeyed.append(s); continue }
+            if hooked[pid].map({ $0.updatedAt < s.updatedAt }) ?? true { hooked[pid] = s }
+        }
+
+        // Every running claude registers itself, so sessions show up even without hooks.
+        var merged: [Session] = []
+        for entry in loadRegistry() where isAlive(entry.pid) {
+            let regState = ["busy": "working", "idle": "idle"][entry.status ?? ""]
+            let regTime = (entry.statusUpdatedAt ?? entry.updatedAt ?? 0) / 1000
+            var s = hooked.removeValue(forKey: entry.pid)
+                ?? Session(id: entry.sessionId, state: regState ?? "idle", updatedAt: regTime, cwd: entry.cwd,
+                           startedAt: regState == "working" ? regTime : nil, pid: entry.pid)
+            // If Claude Code's own status is newer than the last hook, trust it for busy/idle.
+            if let regState, regTime > s.updatedAt + 1 {
+                if regState == "working", s.state != "working", s.state != "waiting" {
+                    s.state = "working"
+                    s.startedAt = regTime
+                    s.activity = nil
+                } else if regState == "idle", s.state == "working" || s.state == "waiting" {
+                    s.state = "idle"
+                }
+            }
+            s.name = entry.nameSource == "derived" ? nil : entry.name
+            s.entrypoint = entry.entrypoint
+            merged.append(s)
+        }
+        merged += hooked.values
+        merged += unkeyed
+        sessions = merged.sorted { $0.updatedAt > $1.updatedAt }
         refreshScreenVerbs()
 
         // Celebrate each newly finished turn once (but not ones that finished before launch).
@@ -385,13 +506,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func refreshScreenVerbs() {
-        let targets = sessions.filter { $0.state == "working" && $0.iterm != nil && $0.hostApp == "com.googlecode.iterm2" }
+        let targets: [(id: String, tty: String)] = sessions.compactMap { s in
+            guard s.state == "working", let pid = s.pid, let tty = procInfo(pid)?.tty else { return nil }
+            return (s.id, tty)
+        }
         screenVerbs = screenVerbs.filter { id, _ in targets.contains { $0.id == id } }
-        guard !targets.isEmpty, !readingScreen else { return }
+        guard !targets.isEmpty, !readingScreen, Terminals.isRunning(Terminals.iTerm) else { return }
         readingScreen = true
-        ScreenReader.queue.async {
+        Terminals.queue.async {
             var found: [String: String] = [:]
-            for t in targets { found[t.id] = ScreenReader.verb(itermSession: t.iterm!) }
+            for t in targets { found[t.id] = Terminals.verb(tty: t.tty) }
             DispatchQueue.main.async {
                 for (id, v) in found { self.screenVerbs[id] = v }
                 self.readingScreen = false
@@ -538,9 +662,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case "error": (dot, label) = ("⚠️", "error")
             default: (dot, label) = ("⚪️", "idle")
             }
-            let detail = s.state == "working" ? s.activity ?? s.prompt : s.message ?? s.prompt
+            let detail = (s.state == "working" ? s.activity ?? s.prompt : s.message ?? s.prompt) ?? s.name
+            let where_ = s.entrypoint == "claude-desktop" ? " · Claude app" : ""
             let text = NSMutableAttributedString(string: "\(dot) \(s.project)  ", attributes: [.font: NSFont.menuFont(ofSize: 0)])
-            text.append(NSAttributedString(string: label, attributes: [
+            text.append(NSAttributedString(string: label + where_, attributes: [
                 .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor,
             ]))
             if let d = truncate(detail, 60) {
@@ -550,7 +675,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let mi = NSMenuItem(title: s.project, action: #selector(openSession(_:)), keyEquivalent: "")
             mi.attributedTitle = text
-            mi.representedObject = s.hostApp
+            mi.representedObject = s.id
+            mi.toolTip = "Open this session"
             mi.target = self
             menu.addItem(mi)
         }
@@ -588,7 +714,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastRenderKey = ""
     }
 
-    @objc func openSession(_ sender: NSMenuItem) { activate(sender.representedObject as? String) }
+    @objc func openSession(_ sender: NSMenuItem) {
+        guard let s = sessions.first(where: { $0.id == sender.representedObject as? String }) else { return }
+        let tty = s.pid.flatMap { procInfo($0)?.tty }
+        let app = s.pid.flatMap { Terminals.hostApp(of: $0) }
+        Terminals.queue.async {
+            // Exact tab in iTerm2/Terminal when we can find it; otherwise just bring the host app forward.
+            if let tty, Terminals.focus(tty: tty) { return }
+            DispatchQueue.main.async {
+                if let app { app.activate() } else { self.activate(s.hostApp) }
+            }
+        }
+    }
 
     @objc func toggleLogin() {
         let svc = SMAppService.mainApp
