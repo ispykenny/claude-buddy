@@ -7,15 +7,22 @@ spinner word as your terminal ("Flibbertigibbeting…"), one critter per busy ag
 
 ## Install
 
-1. **[Download ClaudeBuddy.zip](https://github.com/ispykenny/claude-buddy/releases/latest/download/ClaudeBuddy.zip)** and unzip it.
-2. Drag **ClaudeBuddy.app** into your **Applications** folder.
-3. Open it. macOS will say it can't verify the developer (the app isn't notarized), so go to
-   **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
-4. Click **Connect** when it asks to connect to Claude Code. Restart any Claude Code sessions that were already open.
+Paste this into Terminal:
 
-It updates itself from then on (menu → **Check for Updates…**).
+```sh
+curl -fsSL https://raw.githubusercontent.com/ispykenny/claude-buddy/main/install.sh | bash
+```
+
+A little critter appears in your menu bar. Click **Connect** when it asks to connect to Claude Code, and restart any
+Claude Code sessions that were already open. It updates itself from then on (menu → **Check for Updates…**).
 
 Requires macOS 13+ and [Claude Code](https://claude.com/claude-code).
+
+To uninstall:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ispykenny/claude-buddy/main/uninstall.sh | bash
+```
 
 ## What it does
 
@@ -36,9 +43,8 @@ started before the hooks still show up. Disconnect anytime from the menu (**Conn
 
 ## Development
 
-- `./install.sh`: build, install to `~/Applications`, launch
+- `./dev-install.sh`: build from source, install to `~/Applications`, launch
 - `./release.sh 1.3.0 "notes"`: publish an update (GitHub Release + `appcast.xml`); installed copies update via Sparkle.
   Needs the Sparkle EdDSA private key in your login keychain (`vendor/Sparkle/bin/generate_keys --account claude-buddy`).
-- `./uninstall.sh`: remove the app and its hooks
 - `build/ClaudeBuddy.app/Contents/MacOS/ClaudeBuddy preview sheet.png`: render every animation to one image
 - `build/ClaudeBuddy.app/Contents/MacOS/ClaudeBuddy hooks install|uninstall|status`: manage the hooks from the command line

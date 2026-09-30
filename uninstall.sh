@@ -1,9 +1,15 @@
-#!/bin/zsh
-# Removes the app and its hooks from ~/.claude/settings.json
+#!/bin/bash
+# Removes Claude Buddy and its Claude Code hooks:
+#   curl -fsSL https://raw.githubusercontent.com/ispykenny/claude-buddy/main/uninstall.sh | bash
 set -euo pipefail
+
 pkill -x ClaudeBuddy 2>/dev/null || true
-SETTINGS="$HOME/.claude/settings.json"
-jq 'if .hooks then .hooks |= (map_values(map(.hooks |= map(select(.command | contains("ClaudeBuddy") | not))) | map(select(.hooks | length > 0))) | with_entries(select(.value | length > 0))) else . end' \
-  "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-rm -rf "$HOME/Applications/ClaudeBuddy.app" "$HOME/.claude-buddy"
-echo "Uninstalled."
+for app in "$HOME/Applications/ClaudeBuddy.app" "/Applications/ClaudeBuddy.app"; do
+  if [[ -x "$app/Contents/MacOS/ClaudeBuddy" ]]; then
+    "$app/Contents/MacOS/ClaudeBuddy" hooks uninstall >/dev/null
+  fi
+  rm -rf "$app"
+done
+rm -rf "$HOME/.claude-buddy"
+defaults delete dev.kennykrosky.ClaudeBuddy 2>/dev/null || true
+echo "Claude Buddy uninstalled."
