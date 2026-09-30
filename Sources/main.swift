@@ -446,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var celebrated = Set<String>()
     var firstPoll = true
     var celebrateUntil = 0.0
+    var finished: (project: String, until: Double)?  // brief "✓ x done" while others keep working
     var tick = 0
     var lastRenderKey = ""
     let moves = Choreographer()
@@ -528,6 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for s in sessions where s.state == "done" {
             if let f = s.finishedAt, celebrated.insert("\(s.id)-\(f)").inserted, !firstPoll {
                 celebrateUntil = now() + 4
+                finished = (s.project, now() + 3)
             }
         }
         firstPoll = false
@@ -555,8 +557,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     var mode: Mode {
         if sessions.contains(where: { $0.state == "waiting" }) { return .waiting }
-        if now() < celebrateUntil { return .celebrating }
+        // Others still busy: keep them walking (the title calls out who finished) instead of a full celebration.
         if sessions.contains(where: { $0.state == "working" }) { return .working }
+        if now() < celebrateUntil { return .celebrating }
         return sessions.isEmpty ? .sleeping : .idle
     }
 
@@ -571,7 +574,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             frame = moves.idle(tick)
         case .working:
             frame = moves.working(tick, count: min(workingSessions.count, 3), speaker: speaker)
-            title = workingTitle()
+            if let f = finished, now() < f.until {
+                title = styled(" ✓ \(f.project) done", color: .systemGreen, bold: true)
+            } else {
+                title = workingTitle()
+            }
         case .waiting:
             frame = moves.waiting(tick)
             title = styled(" Needs you!", color: .systemRed, bold: true)
