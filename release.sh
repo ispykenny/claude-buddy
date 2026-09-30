@@ -44,5 +44,6 @@ git add VERSION appcast.xml
 git commit -m "Release $VERSION"
 git tag "v$VERSION"
 git push origin HEAD --tags
-gh release create "v$VERSION" "$ZIP" --repo "$REPO" --verify-tag --title "Claude Buddy $VERSION" --notes "$NOTES"
+cp "$ZIP" build/ClaudeBuddy.zip  # stable name so releases/latest/download/ClaudeBuddy.zip always works
+gh release create "v$VERSION" "$ZIP" build/ClaudeBuddy.zip --repo "$REPO" --verify-tag --title "Claude Buddy $VERSION" --notes "$NOTES"
 echo "Released $VERSION — installed copies will pick it up on their next check."

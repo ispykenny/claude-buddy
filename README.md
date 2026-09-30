@@ -7,7 +7,7 @@ spinner word as your terminal ("Flibbertigibbeting…"), one critter per busy ag
 
 ## Install
 
-1. Download `ClaudeBuddy-x.y.z.zip` from the [latest release](https://github.com/ispykenny/claude-buddy/releases/latest) and unzip it.
+1. **[Download ClaudeBuddy.zip](https://github.com/ispykenny/claude-buddy/releases/latest/download/ClaudeBuddy.zip)** and unzip it.
 2. Drag **ClaudeBuddy.app** into your **Applications** folder.
 3. Open it. macOS will say it can't verify the developer (the app isn't notarized), so go to
    **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
