@@ -465,6 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         poll()
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in self.poll() }
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.animate() }
+        DispatchQueue.main.async { self.setUpHooks() }
     }
 
     // MARK: Polling session files
@@ -691,6 +692,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        let hooks = NSMenuItem(title: "Connected to Claude Code", action: #selector(toggleHooks), keyEquivalent: "")
+        hooks.target = self
+        hooks.state = HookInstaller.status() == .missing ? .off : .on
+        menu.addItem(hooks)
         menu.addItem(toggle("Show tool activity instead of verbs", key: "showActivity"))
         let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
@@ -754,6 +759,15 @@ func duration(_ secs: Double) -> String {
 let args = CommandLine.arguments
 if args.count > 1, args[1] == "hook" {
     runHook()
+    exit(0)
+}
+if args.count > 2, args[1] == "hooks" {  // ClaudeBuddy hooks install|uninstall|status
+    switch args[2] {
+    case "install": try? HookInstaller.install()
+    case "uninstall": try? HookInstaller.uninstall()
+    default: break
+    }
+    print(HookInstaller.status())
     exit(0)
 }
 if args.count > 2, args[1] == "preview" {

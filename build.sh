@@ -16,9 +16,13 @@ APP=build/ClaudeBuddy.app
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp -R $SPARKLE/Sparkle.framework "$APP/Contents/Frameworks/"
 
-swiftc -O -swift-version 5 -target arm64-apple-macosx13.0 \
-  -F $SPARKLE -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-  Sources/*.swift -o "$APP/Contents/MacOS/ClaudeBuddy"
+# Universal binary: Apple Silicon + Intel
+for arch in arm64 x86_64; do
+  swiftc -O -swift-version 5 -target $arch-apple-macosx13.0 \
+    -F $SPARKLE -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+    Sources/*.swift -o build/ClaudeBuddy-$arch
+done
+lipo -create build/ClaudeBuddy-arm64 build/ClaudeBuddy-x86_64 -output "$APP/Contents/MacOS/ClaudeBuddy"
 
 "$APP/Contents/MacOS/ClaudeBuddy" icon build/AppIcon.iconset
 iconutil -c icns build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
