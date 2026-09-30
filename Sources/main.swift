@@ -218,10 +218,11 @@ func runHook() {
 
 let claudeOrange = NSColor(srgbRed: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255, alpha: 1)
 
-enum Eyes { case open, blink, closed }
+enum Eyes { case open, blink, closed, happy, wide, wink, lookUp }
 
 struct Pose: Equatable {
-    var legPhase = 0  // 0 = standing, 1/2 = alternating steps
+    var legPhase = 0  // 0 = standing, 1/2 = alternating steps, 3 = all feet tucked (mid-hop)
+    var tucked = false  // sitting/crouching: body drops a row onto short legs
     var eyes = Eyes.open
     var eyeDX = 0
     var armsUp = false
@@ -243,10 +244,27 @@ func spriteImage(cols: Int, rows: Int = 11, x: Int, y: Int, pose: Pose, pixel p:
     sceneImage(cols: cols, rows: rows, critters: [Critter(x: x, y: y, pose: pose)], pixel: p)
 }
 
-/// Draws several critters onto one canvas.
-func sceneImage(cols: Int, rows: Int = 11, critters: [Critter], pixel p: CGFloat = menuPixel) -> NSImage {
+/// A little pixel-art effect (heart, sparkle, z, …) drawn next to the critters. `X` marks a lit pixel.
+struct Glyph: Equatable {
+    var art: [String]
+    var col: Int
+    var row: Int
+    var color: NSColor
+}
+
+/// Draws several critters (plus any effects) onto one canvas.
+func sceneImage(cols: Int, rows: Int = 11, critters: [Critter], glyphs: [Glyph] = [],
+                pixel p: CGFloat = menuPixel) -> NSImage {
     let img = NSImage(size: NSSize(width: CGFloat(cols) * p, height: CGFloat(rows) * p), flipped: true) { _ in
         for critter in critters { drawCritter(critter, pixel: p) }
+        for g in glyphs {
+            g.color.setFill()
+            for (r, line) in g.art.enumerated() {
+                for (c, ch) in line.enumerated() where ch == "X" {
+                    NSRect(x: CGFloat(g.col + c) * p, y: CGFloat(g.row + r) * p, width: p, height: p).fill()
+                }
+            }
+        }
         return true
     }
     img.isTemplate = false
@@ -254,7 +272,8 @@ func sceneImage(cols: Int, rows: Int = 11, critters: [Critter], pixel p: CGFloat
 }
 
 func drawCritter(_ critter: Critter, pixel p: CGFloat) {
-    let (x, y, pose) = (critter.x, critter.y, critter.pose)
+    let pose = critter.pose
+    let (x, y) = (critter.x, critter.y + (pose.tucked ? 1 : 0))
     func rect(_ c: Int, _ r: Int, _ w: Int, _ h: Int, _ color: NSColor = claudeOrange) {
         color.setFill()
         NSRect(x: CGFloat(x + c) * p, y: CGFloat(y + r) * p, width: CGFloat(w) * p, height: CGFloat(h) * p).fill()
@@ -263,7 +282,8 @@ func drawCritter(_ critter: Critter, pixel p: CGFloat) {
     if pose.armsUp || pose.leftArmUp { rect(1, 4, 1, 1); rect(0, 2, 1, 2) } else { rect(0, 4, 2, 2) }
     if pose.armsUp || pose.rightArmUp { rect(13, 4, 1, 1); rect(14, 2, 1, 2) } else { rect(13, 4, 2, 2) }
     for (i, c) in [3, 5, 9, 11].enumerated() {
-        let lifted = (pose.legPhase == 1 && i % 2 == 0) || (pose.legPhase == 2 && i % 2 == 1)
+        let lifted = pose.tucked || pose.legPhase == 3
+            || (pose.legPhase == 1 && i % 2 == 0) || (pose.legPhase == 2 && i % 2 == 1)
         rect(c, 8, 1, lifted ? 1 : 2)
     }
     let dx = pose.eyeDX
@@ -271,6 +291,13 @@ func drawCritter(_ critter: Critter, pixel p: CGFloat) {
     case .open: rect(4 + dx, 2, 1, 2, .black); rect(10 + dx, 2, 1, 2, .black)
     case .blink: rect(4 + dx, 3, 1, 1, .black); rect(10 + dx, 3, 1, 1, .black)
     case .closed: rect(3, 3, 2, 1, .black); rect(10, 3, 2, 1, .black)
+    case .happy:  // ^ ^
+        for c in [4, 10] { rect(c - 1 + dx, 3, 1, 1, .black); rect(c + dx, 2, 1, 1, .black); rect(c + 1 + dx, 3, 1, 1, .black) }
+    case .wide: rect(4 + dx, 1, 1, 3, .black); rect(10 + dx, 1, 1, 3, .black)
+    case .wink:
+        rect(4 + dx, 2, 1, 2, .black)
+        rect(9 + dx, 3, 1, 1, .black); rect(10 + dx, 2, 1, 1, .black); rect(11 + dx, 3, 1, 1, .black)
+    case .lookUp: rect(4 + dx, 1, 1, 2, .black); rect(10 + dx, 1, 1, 2, .black)
     }
 }
 
@@ -421,6 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var celebrateUntil = 0.0
     var tick = 0
     var lastRenderKey = ""
+    let moves = Choreographer()
     var screenVerbs: [String: String] = [:]
     var readingScreen = false
     let defaults = UserDefaults.standard
@@ -534,54 +562,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func animate() {
         tick += 1
-        var pose = Pose()
-        var cols = 15, x = 0, y = 1
+        let frame: Frame
         var title = NSAttributedString(string: "")
-        var critters: [Critter]? = nil
-        let blinking = tick % 47 < 2
-
         switch mode {
         case .sleeping:
-            pose.eyes = .closed
+            frame = moves.sleeping(tick)
         case .idle:
-            pose.eyes = blinking ? .blink : .open
-            let cycle = tick % 120
-            pose.eyeDX = (80..<92).contains(cycle) ? -1 : (98..<110).contains(cycle) ? 1 : 0
+            frame = moves.idle(tick)
         case .working:
-            // One critter per working agent (up to 3), each scuttling in its own lane, out of step.
-            let n = min(workingSessions.count, 3)
-            let range = n == 1 ? 6 : 4
-            let slot = 15 + range + (n == 1 ? 0 : 1)
-            cols = n * slot - (n == 1 ? 0 : 1)
-            critters = (0..<n).map { i in
-                let step = (tick / 2 + i * 3) % (range * 2)
-                var pose = Pose()
-                pose.legPhase = (tick / 2 + i) % 2 + 1
-                pose.eyes = (tick + i * 17) % 47 < 2 ? .blink : .open
-                pose.eyeDX = step < range ? 1 : -1
-                if n > 1, i == speaker { pose.rightArmUp = (tick / 3) % 2 == 0 }  // the one talking waves
-                return Critter(x: i * slot + (step <= range ? step : range * 2 - step),
-                               y: pose.legPhase == 1 ? 1 : 0, pose: pose)
-            }
+            frame = moves.working(tick, count: min(workingSessions.count, 3), speaker: speaker)
             title = workingTitle()
         case .waiting:
-            cols = 17
-            x = 1 + ((tick / 2) % 2 == 0 ? -1 : 1) * (tick % 20 < 6 ? 1 : 0)
-            pose.leftArmUp = (tick / 3) % 2 == 0
-            pose.rightArmUp = !pose.leftArmUp
+            frame = moves.waiting(tick)
             title = styled(" Needs you!", color: .systemRed, bold: true)
         case .celebrating:
-            y = (tick / 3) % 2 == 0 ? 0 : 1
-            pose.armsUp = true
-            pose.eyes = .blink
+            frame = moves.celebrating(tick)
             title = styled(" Done!", color: claudeOrange, bold: true)
         }
 
-        let scene = critters ?? [Critter(x: x, y: y, pose: pose)]
-        let key = "\(cols)|\(scene)|\(title.string)|\(mode)|\(mode == .working ? tick : 0)"
+        let key = "\(frame)|\(title.string)|\(mode == .working ? tick : 0)"
         guard key != lastRenderKey, let button = item.button else { return }
         lastRenderKey = key
-        button.image = sceneImage(cols: cols, critters: scene)
+        button.image = sceneImage(cols: frame.cols, critters: frame.critters, glyphs: frame.glyphs)
         button.attributedTitle = title
     }
 
@@ -745,6 +747,10 @@ func duration(_ secs: Double) -> String {
 let args = CommandLine.arguments
 if args.count > 1, args[1] == "hook" {
     runHook()
+    exit(0)
+}
+if args.count > 2, args[1] == "preview" {
+    renderPreview(to: args[2])
     exit(0)
 }
 if args.count > 2, args[1] == "icon" {
